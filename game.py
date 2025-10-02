@@ -15,8 +15,8 @@ conn = mysql.connector.connect(
     host="localhost",
     port=3306,
     database="ChronoQuest",
-    user="your_username",      # Replace with your DB username
-    password="your_password",  # Replace with your DB password
+    user="your_username",      # Replace with your username
+    password="your_password",  # Replace with your password
     auth_plugin="mysql_native_password",
     autocommit=True
 )
