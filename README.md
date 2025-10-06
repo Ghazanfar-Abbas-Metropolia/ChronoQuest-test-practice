@@ -1,150 +1,119 @@
-# Story
+# ChronoQuest
 
-You are a time-traveler, known only as the “Chrono Explorer.”
-Your mission is to journey across airports scattered around the world to complete legendary **Quests of Time**. Each airport you land at brings new opportunities — treasure, challenges, or danger.
+## Story
 
-When you arrive at an airport, the board flashes:
-**“Welcome to [Airport Name]! You have [Money]$ and [Range] km of travel power left.”**
+You are a daring **time-traveling adventurer**, seeking the legendary **Chrono Diamond**, a jewel said to shine brighter than the stars themselves.
 
-To survive and progress, you must carefully manage your **money** (to refuel or recover) and your **range** (to travel). At each airport you may encounter:
+Your journey begins at your **starting airport**, where the display board greets you:
 
-* A **quest** (like reaching a legendary city or surviving long flights).
-* A **reward** (money or points).
-* Or a **challenge** (losing resources, facing fuel shortages, or even robbers).
+> “Welcome to KJFK! You have **$1000** and **5000 km of range** left.”
 
-Complete enough quests, and you’ll unlock the ultimate secret: the **Chrono Diamond**, hidden in the depths of time.
-But beware — only careful travelers can finish their journey without running out of money or range.
+With money and fuel in hand, you take your first flight. Some airports hide **lootboxes**—offering extra money, score, or range. Others conceal **bandits**, ready to rob you of your treasures.
 
-Your story is written in the database as you play — every airport you reach, every quest you complete, and every victory or loss is stored for history.
+Your quest takes you across **USA, Finland, Sweden, Japan, Germany, and Norway**. Each airport may hold a **goal**—complete it for rewards and points.
+Some goals are easy, others are rare. If luck is on your side, you may stumble upon the **Chrono Diamond** itself.
 
----
+But beware: to truly win, you must **return to your starting airport**, diamond in hand, with your money and victories intact.
 
-# Database
-
-This game uses the **airport** and **country** tables from the `flight_game` database.
-
-### 1. Create a new database
-
-```sql
-CREATE DATABASE chronoquest;
-USE chronoquest;
-```
-
-### 2. Import airports and countries
-
-Take the data from `flight_game_reordered_full.sql` and keep **airport** and **country** tables.
+Can you outsmart fate, survive the journey, and etch your name into history?
 
 ---
 
-### 3. Create the following tables
+## Database
 
-```sql
-CREATE TABLE Player (
-    player_id INT PRIMARY KEY AUTO_INCREMENT,
-    name VARCHAR(100) NOT NULL,
-    email VARCHAR(100) UNIQUE NOT NULL,
-    join_date DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
+This game uses a **MariaDB/MySQL database** called `ChronoQuest`.
+Follow these steps to set it up:
 
-CREATE TABLE Game (
-    game_id INT PRIMARY KEY AUTO_INCREMENT,
-    player_id INT NOT NULL,
-    start_airport VARCHAR(40) NOT NULL,
-    current_airport VARCHAR(40) NOT NULL,
-    money FLOAT NOT NULL DEFAULT 1000,
-    player_range DECIMAL(8,2) NOT NULL DEFAULT 500,
-    score INT NOT NULL DEFAULT 0,
-    game_status ENUM('active','won','lost') NOT NULL DEFAULT 'active',
-    FOREIGN KEY (player_id) REFERENCES Player(player_id),
-    FOREIGN KEY (start_airport) REFERENCES Airport(ident),
-    FOREIGN KEY (current_airport) REFERENCES Airport(ident)
-);
+1. **Create the database:**
 
-CREATE TABLE Goal (
-    goal_id INT PRIMARY KEY,
-    name VARCHAR(100) NOT NULL,
-    target_text VARCHAR(255) NOT NULL,
-    points INT NOT NULL
-);
+   ```sql
+   CREATE DATABASE ChronoQuest;
+   USE ChronoQuest;
+   ```
 
-CREATE TABLE Goal_Reached (
-    id INT PRIMARY KEY AUTO_INCREMENT,
-    game_id INT NOT NULL,
-    goal_id INT NOT NULL,
-    reached_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (game_id) REFERENCES Game(game_id),
-    FOREIGN KEY (goal_id) REFERENCES Goal(goal_id)
-);
-```
+2. **Run the provided schema (chronoquest.sql):**
 
----
+   ```bash
+   mysql -u root -p ChronoQuest < chronoquest.sql
+   ```
 
-### 4. Insert sample player
+   This will create the following tables:
 
-```sql
-INSERT INTO Player (name, email)
-VALUES ('TestPlayer', 'testplayer@example.com');
-```
+   * `Player` → stores player profiles
+   * `Game` → active game sessions
+   * `Airport` → airports with ICAO codes, coordinates, and countries
+   * `Goal` → missions/goals tied to airports
+   * `Goal_Reached` → logs of completed goals
+
+3. **Verify the tables:**
+
+   ```sql
+   SHOW TABLES;
+   ```
+
+   You should see:
+
+   ```
+   +----------------+
+   | Tables_in_ChronoQuest |
+   +----------------+
+   | Airport        |
+   | Game           |
+   | Goal           |
+   | Goal_Reached   |
+   | Player         |
+   +----------------+
+   ```
 
 ---
 
-### 5. Insert sample goals (quests)
+## Example Goals & Airports
 
-```sql
-INSERT INTO Goal (goal_id, name, target_text, points)
-VALUES
-(7, 'Fly to Helsinki', 'Reach Helsinki Vantaa Airport from your starting location', 100),
-(8, 'Fly to Los Angeles', 'Land at Los Angeles International Airport', 200),
-(9, 'Visit Germany airports', 'Visit Frankfurt, Munich, and Berlin airports in order', 300),
-(10,'Earn 1000 points','Accumulate 1000 points',100),
-(11,'Long distance flight','Fly 1000 km in one game',150),
-(12,'Fuel challenge','Complete 5 flights without refueling',50);
-```
+* **USA** → JFK (KJFK), LAX (KLAX)
+* **Finland** → Helsinki (EFHK)
+* **Sweden** → Arlanda (ESSA)
+* **Japan** → Tokyo Haneda (RJTT), Narita (RJAA)
+* **Germany** → Frankfurt (EDDF), Munich (EDDM)
+* **Norway** → Oslo (ENGM), Bergen (ENBR)
 
----
+Example goals include:
 
-### 6. Insert a sample game
-
-```sql
-INSERT INTO Game (player_id, start_airport, current_airport, money, player_range, score, game_status)
-VALUES (1, '00A', '00A', 1000, 500, 0, 'active');
-```
+* ✈️ *Transatlantic Flight – USA* (+$500, 30% chance)
+* 🏔️ *Nordic Explorer – Finland* (+$400, 25% chance)
+* 🎌 *Samurai Journey – Japan* (+$600, 15% chance)
+* 💎 *Chrono Diamond – The Ultimate Goal* (rare)
 
 ---
 
-### 7. Simulate progress
+## Game Setup
 
-Mark a quest completed (example: Los Angeles):
+1. Install dependencies:
 
-```sql
-INSERT INTO Goal_Reached (game_id, goal_id)
-VALUES (1, 8);
+   ```bash
+   pip install mysql-connector-python
+   ```
 
-UPDATE Game g
-JOIN Goal gr ON gr.goal_id = 8
-SET g.score = g.score + gr.points
-WHERE g.game_id = 1;
-```
+2. Run the game:
+
+   ```bash
+   python game.py
+   ```
+
+3. Sample playthrough:
+
+   ```
+   🎮 New game started for Alice at KJFK
+   📊 Status: Airport=KJFK, Money=$1000.00, Score=0
+   ✅ Flew from KJFK to KLAX
+   🎯 Goal achieved: Pacific Hop - USA (+$450.00, +100 score)
+   📊 Status: Airport=KLAX, Money=$1450.00, Score=100
+   ```
 
 ---
 
-### 8. Verify setup
+## Next Steps
 
-```sql
-SHOW TABLES;
-```
-
-Expected:
-
-```
-+----------------+
-| Tables_in_chronoquest |
-+----------------+
-| airport        |
-| country        |
-| player         |
-| game           |
-| goal           |
-| goal_reached   |
-+----------------+
-```
+* Add **time travel mechanics** (jump between years with random risks).
+* Introduce **fuel purchase system**.
+* Expand airport list with more countries.
+* Add **win/loss conditions** (score threshold, money bankruptcy).
