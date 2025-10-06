@@ -1,133 +1,173 @@
-import mysql.connector
+# ============================================
+# ChronoQuest - Time Traveling Adventure Game
+# ============================================
+
 import random
+import mysql.connector
+import sys
 
-# ==============================
-# Database Connection
-# ==============================
-def get_connection():
-    return mysql.connector.connect(
-        host="localhost",
-        user="root",
-        password="yourpassword",
-        database="ChronoQuest"
+# -----------------------
+# DB CONNECTION
+# -----------------------
+conn = mysql.connector.connect(
+    host="localhost",
+    port=3306,
+    database="ChronoQuest",
+    user="your_username",      # replace
+    password="your_password",  # replace
+    auth_plugin="mysql_native_password",
+    autocommit=True
+)
+
+def get_cursor(dict_cursor=True):
+    return conn.cursor(dictionary=True) if dict_cursor else conn.cursor()
+
+# -----------------------
+# UTILS
+# -----------------------
+def safe_input(prompt: str):
+    """Input wrapper that allows quitting at any prompt."""
+    user_input = input(prompt).strip()
+    if user_input.lower() == "quit":
+        print("🛑 Exiting ChronoQuest... Goodbye, traveler!")
+        sys.exit(0)
+    return user_input
+
+# -----------------------
+# PLAYER SETUP
+# -----------------------
+def create_player():
+    name = safe_input("Enter your name (or type quit to exit): ")
+    email = f"{name.lower()}@chronoquest.com"
+
+    cur = get_cursor()
+    cur.execute("INSERT INTO Player (name, email) VALUES (%s, %s)", (name, email))
+    return cur.lastrowid
+
+# -----------------------
+# GAME SETUP
+# -----------------------
+def start_game(player_id):
+    cur = get_cursor()
+    cur.execute("SELECT icao_code, name, country FROM Airport")
+    airports = cur.fetchall()
+
+    print("\nAvailable Starting Airports:")
+    for ap in airports:
+        print(f"{ap['icao_code']} - {ap['name']} ({ap['country']})")
+
+    start_airport = safe_input("\nChoose your starting airport (ICAO): ").upper()
+
+    # validate
+    cur.execute("SELECT * FROM Airport WHERE icao_code = %s", (start_airport,))
+    if not cur.fetchone():
+        print("❌ Invalid airport. Starting aborted.")
+        sys.exit(0)
+
+    cur.execute(
+        """INSERT INTO Game (player_id, start_airport, current_airport, money, player_range, score, game_status)
+           VALUES (%s, %s, %s, 1000.00, 5000, 0, 'active')""",
+        (player_id, start_airport, start_airport)
     )
+    return cur.lastrowid
 
-# ==============================
-# Game Logic
-# ==============================
-class ChronoQuest:
-    def __init__(self, player_name, player_email):
-        self.conn = get_connection()
-        self.cursor = self.conn.cursor(dictionary=True)
+# -----------------------
+# GAME FUNCTIONS
+# -----------------------
+def show_status(game_id):
+    cur = get_cursor()
+    cur.execute("SELECT * FROM Game WHERE game_id = %s", (game_id,))
+    g = cur.fetchone()
+    print(f"\n📊 Status:")
+    print(f"Current Airport: {g['current_airport']}")
+    print(f"Money: ${g['money']}")
+    print(f"Range: {g['player_range']} km")
+    print(f"Score: {g['score']}")
+    print(f"Game Status: {g['game_status']}")
 
-        # Ensure player exists
-        self.cursor.execute("SELECT * FROM Player WHERE email = %s", (player_email,))
-        player = self.cursor.fetchone()
-        if not player:
-            self.cursor.execute(
-                "INSERT INTO Player (name, email) VALUES (%s, %s)",
-                (player_name, player_email)
-            )
-            self.conn.commit()
-            self.player_id = self.cursor.lastrowid
+def fly_to_airport(game_id, destination):
+    cur = get_cursor()
+
+    # find game
+    cur.execute("SELECT * FROM Game WHERE game_id = %s", (game_id,))
+    game = cur.fetchone()
+
+    # find destination
+    cur.execute("SELECT * FROM Airport WHERE icao_code = %s", (destination,))
+    dest = cur.fetchone()
+    if not dest:
+        print("❌ Airport not found.")
+        return
+
+    # simulate travel
+    year = random.randint(1400, 2500)
+    print(f"\n✈️ Flying to {dest['icao_code']} ({dest['name']}, {dest['country']}) in the year {year}...")
+
+    # basic fuel/money deductions
+    money_cost = random.randint(100, 400)
+    range_cost = random.randint(500, 1500)
+
+    new_money = game['money'] - money_cost
+    new_range = game['player_range'] - range_cost
+
+    if new_money < 0 or new_range < 0:
+        print("💀 You ran out of money or fuel! Game over.")
+        cur.execute("UPDATE Game SET game_status='lost' WHERE game_id=%s", (game_id,))
+        sys.exit(0)
+
+    # possible time-travel events
+    bonus = 0
+    if year < 1900 and random.random() < 0.25:
+        print("⚔️ Turbulent past! Bandits stole half your money!")
+        new_money //= 2
+    elif 1900 <= year <= 1950 and random.random() < 0.20:
+        print("🔥 Engine trouble in early aviation! You lose extra range.")
+        new_range -= 1000
+    elif year > 2025 and random.random() < 0.20:
+        print("🚀 Future technology boosts your range!")
+        new_range += 2000
+        bonus += 100
+
+    # rare chrono diamond
+    if year in (2000, 2222) and random.random() < 0.01:
+        print("💎 You discovered the legendary Chrono Diamond!")
+        bonus += 1000
+        new_money += 5000
+
+    # update game state
+    cur.execute("""UPDATE Game 
+                   SET current_airport=%s, money=%s, player_range=%s, score=score+%s 
+                   WHERE game_id=%s""",
+                (dest['icao_code'], new_money, new_range, bonus, game_id))
+
+    print(f"Arrived at {dest['icao_code']} with ${new_money}, {new_range} km range, +{bonus} score.")
+
+# -----------------------
+# MAIN LOOP
+# -----------------------
+def main():
+    print("🌍 Welcome to ChronoQuest! Type 'quit' at any time to exit.")
+    player_id = create_player()
+    game_id = start_game(player_id)
+
+    while True:
+        print("\n--- ChronoQuest Menu ---")
+        print("1. Fly to a new airport")
+        print("2. Check status")
+        print("3. Quit")
+
+        choice = safe_input("Choose an option: ")
+
+        if choice == "1":
+            icao = safe_input("Enter ICAO code of destination: ").upper()
+            fly_to_airport(game_id, icao)
+        elif choice == "2":
+            show_status(game_id)
+        elif choice == "3":
+            print("🛑 Exiting ChronoQuest. See you next time!")
+            break
         else:
-            self.player_id = player["player_id"]
+            print("Invalid choice.")
 
-        # Start new game
-        self.start_airport = "KJFK"  # Default start (JFK USA)
-        self.cursor.execute("""
-            INSERT INTO Game (player_id, start_airport, current_airport, money, player_range, score)
-            VALUES (%s, %s, %s, %s, %s, %s)
-        """, (self.player_id, self.start_airport, self.start_airport, 1000.0, 5000, 0))
-        self.conn.commit()
-        self.game_id = self.cursor.lastrowid
-
-        print(f"🎮 New game started for {player_name} at {self.start_airport}")
-
-    # --------------------------
-    # Get airport by ICAO
-    # --------------------------
-    def get_airport(self, icao_code):
-        self.cursor.execute("SELECT * FROM Airport WHERE icao_code = %s", (icao_code,))
-        return self.cursor.fetchone()
-
-    # --------------------------
-    # Fly to a new airport
-    # --------------------------
-    def fly_to_airport(self, icao_code):
-        # Current position
-        self.cursor.execute("SELECT * FROM Game WHERE game_id = %s", (self.game_id,))
-        game = self.cursor.fetchone()
-        current_airport = self.get_airport(game["current_airport"])
-        target_airport = self.get_airport(icao_code)
-
-        if not target_airport:
-            print("❌ Airport not found.")
-            return
-
-        # (Simplified) Check distance using flat Euclidean approximation
-        dist = ((current_airport["longitude"] - target_airport["longitude"])**2 +
-                (current_airport["latitude"] - target_airport["latitude"])**2) ** 0.5
-
-        if dist > game["player_range"]:
-            print("✈️ Too far! You can’t reach this airport.")
-            return
-
-        # Update position
-        self.cursor.execute("""
-            UPDATE Game SET current_airport = %s WHERE game_id = %s
-        """, (icao_code, self.game_id))
-        self.conn.commit()
-
-        print(f"✅ Flew from {current_airport['icao_code']} to {target_airport['icao_code']}")
-
-        # Check if there's a goal at this airport
-        self.check_goal(target_airport["airport_id"])
-
-    # --------------------------
-    # Check and apply goal rewards
-    # --------------------------
-    def check_goal(self, airport_id):
-        self.cursor.execute("""
-            SELECT * FROM Goal
-            WHERE airport_id = %s AND game_id = %s
-        """, (airport_id, self.game_id))
-        goals = self.cursor.fetchall()
-
-        for goal in goals:
-            if random.random() < float(goal["probability"]):
-                # Reward player
-                self.cursor.execute("""
-                    UPDATE Game
-                    SET money = money + %s, score = score + 100
-                    WHERE game_id = %s
-                """, (goal["money_value"], self.game_id))
-                self.conn.commit()
-
-                # Record achievement
-                self.cursor.execute("""
-                    INSERT INTO Goal_Reached (game_id, goal_id, airport_id)
-                    VALUES (%s, %s, %s)
-                """, (self.game_id, goal["goal_id"], airport_id))
-                self.conn.commit()
-
-                print(f"🎯 Goal achieved: {goal['name']} (+${goal['money_value']}, +100 score)")
-
-    # --------------------------
-    # Show player status
-    # --------------------------
-    def show_status(self):
-        self.cursor.execute("SELECT * FROM Game WHERE game_id = %s", (self.game_id,))
-        game = self.cursor.fetchone()
-        print(f"📊 Status: Airport={game['current_airport']}, Money=${game['money']}, Score={game['score']}")
-
-# ==============================
-# Example Gameplay
-# ==============================
 if __name__ == "__main__":
-    game = ChronoQuest("Alice", "alice@example.com")
-    game.show_status()
-    game.fly_to_airport("KLAX")   # Fly to Los Angeles
-    game.show_status()
-    game.fly_to_airport("EDDF")   # Fly to Frankfurt
-    game.show_status()
+    main()
