@@ -108,12 +108,3 @@ Example goals include:
    🎯 Goal achieved: Pacific Hop - USA (+$450.00, +100 score)
    📊 Status: Airport=KLAX, Money=$1450.00, Score=100
    ```
-
----
-
-## Next Steps
-
-* Add **time travel mechanics** (jump between years with random risks).
-* Introduce **fuel purchase system**.
-* Expand airport list with more countries.
-* Add **win/loss conditions** (score threshold, money bankruptcy).
