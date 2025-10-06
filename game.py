@@ -1,242 +1,133 @@
-# ChronoQuest - runnable game
-# Checklist before starting
-# - Make sure mysql-connector-python is installed (pip install mysql-connector-python)
-# - Make sure MariaDB is running
-# - Database must be named ChronoQuest
-# - Tables: Player, Game, Goal, Goal_Reached, Airport, Country
-
-import random
 import mysql.connector
+import random
 
-# -----------------------
-# DB CONNECTION
-# -----------------------
-conn = mysql.connector.connect(
-    host="localhost",
-    port=3306,
-    database="ChronoQuest",
-    user="your_username",      # Replace with your username
-    password="your_password",  # Replace with your password
-    auth_plugin="mysql_native_password",
-    autocommit=True
-)
+# ==============================
+# Database Connection
+# ==============================
+def get_connection():
+    return mysql.connector.connect(
+        host="localhost",
+        user="root",
+        password="yourpassword",
+        database="ChronoQuest"
+    )
 
-# -----------------------
-# HELPERS / DB UTILS
-# -----------------------
+# ==============================
+# Game Logic
+# ==============================
+class ChronoQuest:
+    def __init__(self, player_name, player_email):
+        self.conn = get_connection()
+        self.cursor = self.conn.cursor(dictionary=True)
 
-def get_cursor(dict_cursor=True):
-    if dict_cursor:
-        return conn.cursor(dictionary=True)
-    return conn.cursor()
+        # Ensure player exists
+        self.cursor.execute("SELECT * FROM Player WHERE email = %s", (player_email,))
+        player = self.cursor.fetchone()
+        if not player:
+            self.cursor.execute(
+                "INSERT INTO Player (name, email) VALUES (%s, %s)",
+                (player_name, player_email)
+            )
+            self.conn.commit()
+            self.player_id = self.cursor.lastrowid
+        else:
+            self.player_id = player["player_id"]
 
-def get_or_create_player(player_name):
-    cur = get_cursor()
-    cur.execute("SELECT player_id FROM Player WHERE name = %s", (player_name,))
-    row = cur.fetchone()
-    if row:
-        return row['player_id']
-    cur = get_cursor(False)
-    cur.execute("INSERT INTO Player (name, email) VALUES (%s, %s)", (player_name, f"{player_name}@example.com"))
-    return cur.lastrowid
+        # Start new game
+        self.start_airport = "KJFK"  # Default start (JFK USA)
+        self.cursor.execute("""
+            INSERT INTO Game (player_id, start_airport, current_airport, money, player_range, score)
+            VALUES (%s, %s, %s, %s, %s, %s)
+        """, (self.player_id, self.start_airport, self.start_airport, 1000.0, 5000, 0))
+        self.conn.commit()
+        self.game_id = self.cursor.lastrowid
 
-# -----------------------
-# GAME FUNCTIONS
-# -----------------------
+        print(f"🎮 New game started for {player_name} at {self.start_airport}")
 
-def get_airports(limit=30):
-    sql = """SELECT ident, name, country
-             FROM Airport
-             ORDER BY RAND()
-             LIMIT %s"""
-    cur = get_cursor()
-    cur.execute(sql, (limit,))
-    return cur.fetchall()
+    # --------------------------
+    # Get airport by ICAO
+    # --------------------------
+    def get_airport(self, icao_code):
+        self.cursor.execute("SELECT * FROM Airport WHERE icao_code = %s", (icao_code,))
+        return self.cursor.fetchone()
 
-def get_goals():
-    cur = get_cursor()
-    cur.execute("SELECT * FROM Goal")
-    return cur.fetchall()
+    # --------------------------
+    # Fly to a new airport
+    # --------------------------
+    def fly_to_airport(self, icao_code):
+        # Current position
+        self.cursor.execute("SELECT * FROM Game WHERE game_id = %s", (self.game_id,))
+        game = self.cursor.fetchone()
+        current_airport = self.get_airport(game["current_airport"])
+        target_airport = self.get_airport(icao_code)
 
-def create_game(player_id, start_airport, money, p_range):
-    sql = """INSERT INTO Game
-             (player_id, start_airport, current_airport, money, player_range, score, game_status)
-             VALUES (%s, %s, %s, %s, %s, %s, %s)"""
-    cur = get_cursor(False)
-    cur.execute(sql, (player_id, start_airport, start_airport, money, p_range, 0, 'active'))
-    return cur.lastrowid
+        if not target_airport:
+            print("❌ Airport not found.")
+            return
 
-def get_airport_info(icao):
-    cur = get_cursor()
-    cur.execute("SELECT ident, name, country FROM Airport WHERE ident = %s", (icao,))
-    return cur.fetchone()
+        # (Simplified) Check distance using flat Euclidean approximation
+        dist = ((current_airport["longitude"] - target_airport["longitude"])**2 +
+                (current_airport["latitude"] - target_airport["latitude"])**2) ** 0.5
 
-def goal_already_reached(game_id, goal_id):
-    cur = get_cursor()
-    cur.execute("SELECT 1 FROM Goal_Reached WHERE game_id = %s AND goal_id = %s LIMIT 1", (game_id, goal_id))
-    return cur.fetchone() is not None
+        if dist > game["player_range"]:
+            print("✈️ Too far! You can’t reach this airport.")
+            return
 
-def insert_goal_reached(game_id, goal_id):
-    cur = get_cursor(False)
-    cur.execute("INSERT INTO Goal_Reached (game_id, goal_id) VALUES (%s, %s)", (game_id, goal_id))
+        # Update position
+        self.cursor.execute("""
+            UPDATE Game SET current_airport = %s WHERE game_id = %s
+        """, (icao_code, self.game_id))
+        self.conn.commit()
 
-def update_game_score(game_id, points):
-    cur = get_cursor(False)
-    cur.execute("UPDATE Game SET score = score + %s WHERE game_id = %s", (points, game_id))
+        print(f"✅ Flew from {current_airport['icao_code']} to {target_airport['icao_code']}")
 
-def update_location(game_id, icao, p_range, money):
-    cur = get_cursor(False)
-    cur.execute("""UPDATE Game
-                   SET current_airport = %s,
-                       player_range = %s,
-                       money = %s
-                   WHERE game_id = %s""", (icao, p_range, money, game_id))
+        # Check if there's a goal at this airport
+        self.check_goal(target_airport["airport_id"])
 
-def find_matching_goal_by_airport(airport):
-    cur = get_cursor()
-    cur.execute("""SELECT goal_id, name, target_text, points
-                   FROM Goal
-                   WHERE target_text LIKE CONCAT('%%', %s, '%%')
-                      OR name LIKE CONCAT('%%', %s, '%%')
-                   LIMIT 1""", (airport['name'], airport['ident']))
-    return cur.fetchone()
+    # --------------------------
+    # Check and apply goal rewards
+    # --------------------------
+    def check_goal(self, airport_id):
+        self.cursor.execute("""
+            SELECT * FROM Goal
+            WHERE airport_id = %s AND game_id = %s
+        """, (airport_id, self.game_id))
+        goals = self.cursor.fetchall()
 
-# -----------------------
-# GAME SETUP
-# -----------------------
+        for goal in goals:
+            if random.random() < float(goal["probability"]):
+                # Reward player
+                self.cursor.execute("""
+                    UPDATE Game
+                    SET money = money + %s, score = score + 100
+                    WHERE game_id = %s
+                """, (goal["money_value"], self.game_id))
+                self.conn.commit()
 
-print("Welcome to ChronoQuest!")
-player_name = input("Enter your player name: ").strip() or "TestPlayer"
+                # Record achievement
+                self.cursor.execute("""
+                    INSERT INTO Goal_Reached (game_id, goal_id, airport_id)
+                    VALUES (%s, %s, %s)
+                """, (self.game_id, goal["goal_id"], airport_id))
+                self.conn.commit()
 
-player_id = get_or_create_player(player_name)
+                print(f"🎯 Goal achieved: {goal['name']} (+${goal['money_value']}, +100 score)")
 
-# Initial settings
-money = 1000
-player_range = 2000
-score = 0
-game_over = False
-win = False
-diamond_found = False   # Important: initialized here
+    # --------------------------
+    # Show player status
+    # --------------------------
+    def show_status(self):
+        self.cursor.execute("SELECT * FROM Game WHERE game_id = %s", (self.game_id,))
+        game = self.cursor.fetchone()
+        print(f"📊 Status: Airport={game['current_airport']}, Money=${game['money']}, Score={game['score']}")
 
-# Select random airports
-all_airports = get_airports(limit=30)
-if len(all_airports) == 0:
-    print("No airports found in the Airport table. Exiting.")
-    raise SystemExit
-
-start_airport = all_airports[0]['ident']
-current_airport = start_airport
-
-# Create game row in DB
-game_id = create_game(player_id, start_airport, money, player_range)
-print(f"\nYour journey begins at {start_airport} - {all_airports[0]['name']}")
-
-# -----------------------
-# MAIN GAME LOOP
-# -----------------------
-while not game_over:
-    airport = get_airport_info(current_airport)
-    print("\n=================================")
-    print(f"You are at: {airport['name']} ({airport['ident']}) — Country: {airport['country']}")
-    print(f"Money: ${money:.0f} | Range: {player_range:.0f} km | Score: {score}")
-    print("=================================\n")
-
-    # Check for goal at this airport
-    matching_goal = find_matching_goal_by_airport(airport)
-    if matching_goal and not goal_already_reached(game_id, matching_goal['goal_id']):
-        print(f"Quest available: {matching_goal['name']} ({matching_goal['points']} pts)")
-        choice = input("Do you want to complete it? (Y/N): ").strip().upper()
-        if choice == 'Y':
-            if matching_goal['points'] > 0:
-                reward = matching_goal['points']
-                money += reward
-                score += matching_goal['points']
-                insert_goal_reached(game_id, matching_goal['goal_id'])
-                update_game_score(game_id, matching_goal['points'])
-                print(f"Completed '{matching_goal['name']}' → +${reward}, +{matching_goal['points']} pts")
-            elif matching_goal['points'] == 0:
-                insert_goal_reached(game_id, matching_goal['goal_id'])
-                print("You found the Chrono Diamond! Return to the start to win.")
-                diamond_found = True
-            else:
-                money = 0
-                insert_goal_reached(game_id, matching_goal['goal_id'])
-                print("You were robbed and lost all money.")
-
-    # Refuel option
-    if money > 0:
-        fuel_input = input("Buy fuel? 1$ = 2 km. Enter dollars or press Enter: ").strip()
-        if fuel_input:
-            try:
-                dollars = int(fuel_input)
-                if dollars <= money and dollars >= 0:
-                    money -= dollars
-                    player_range += dollars * 2
-                    print(f"Bought {dollars}$ fuel → +{dollars*2} km. Range = {player_range}, Money = {money}")
-                else:
-                    print("Invalid amount.")
-            except ValueError:
-                print("Not a number.")
-
-    # Show available airports
-    print("\nAirports available to fly:")
-    for ap in all_airports:
-        print(f"  - {ap['ident']}: {ap['name']} ({ap['country']})")
-
-    dest = input("Enter destination ICAO (or 'quit'): ").strip().upper()
-    if dest.lower() == "quit":
-        game_over = True
-        break
-
-    dest_record = next((a for a in all_airports if a['ident'] == dest), None)
-    if not dest_record:
-        print("Invalid choice.")
-        continue
-
-    travel_cost = 200
-    if player_range < travel_cost:
-        print("Not enough range.")
-        game_over = True
-        break
-
-    player_range -= travel_cost
-    current_airport = dest
-    update_location(game_id, current_airport, player_range, money)
-    print(f"Flew to {dest}. Range left: {player_range} km")
-
-    # Win conditions
-    cur = get_cursor()
-    cur.execute("SELECT COUNT(*) AS total FROM Goal")
-    total_goals = cur.fetchone()['total'] or 0
-    cur.execute("SELECT COUNT(*) AS done FROM Goal_Reached WHERE game_id = %s", (game_id,))
-    done_goals = cur.fetchone()['done'] or 0
-
-    if total_goals > 0 and done_goals == total_goals and current_airport == start_airport:
-        print("All quests complete & back to start. You win!")
-        win = True
-        game_over = True
-        break
-
-    if diamond_found and current_airport == start_airport:
-        print("Returned to start with the Chrono Diamond. You win!")
-        win = True
-        game_over = True
-        break
-
-    if score >= 1000:
-        print("You reached 1000+ score. You win!")
-        win = True
-        game_over = True
-        break
-
-# -----------------------
-# GAME OVER
-# -----------------------
-print("\n=== GAME OVER ===")
-print("Result:", "WIN" if win else "LOSE")
-print(f"Final Money: ${money:.0f}")
-print(f"Final Range: {player_range:.0f} km")
-print(f"Final Score: {score}")
-
-# Close
-conn.close()
+# ==============================
+# Example Gameplay
+# ==============================
+if __name__ == "__main__":
+    game = ChronoQuest("Alice", "alice@example.com")
+    game.show_status()
+    game.fly_to_airport("KLAX")   # Fly to Los Angeles
+    game.show_status()
+    game.fly_to_airport("EDDF")   # Fly to Frankfurt
+    game.show_status()
